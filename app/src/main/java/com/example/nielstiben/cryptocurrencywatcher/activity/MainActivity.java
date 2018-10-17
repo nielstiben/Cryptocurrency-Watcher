@@ -277,7 +277,7 @@ public class MainActivity extends AppCompatActivity {
         float secondCurrencyAmount = prefs.getFloat("second_currency_amount", 5600);
 
         exchangeRateUpdated = prefs.getLong("updated_on", -1);
-        exchangeRate = prefs.getFloat("exchange_rate", 0);
+        exchangeRate = prefs.getFloat("exchange_rate", 0.00017621f);
 
 
         // Apply the result

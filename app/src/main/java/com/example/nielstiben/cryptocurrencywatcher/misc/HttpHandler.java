@@ -13,12 +13,9 @@ import java.net.URL;
  */
 class HttpHandler {
 
-    private static final String TAG = HttpHandler.class.getSimpleName();
-
     HttpHandler() {
     }
 
-    // todo: better error handling
     String makeServiceCall(String reqUrl) throws IOException {
         URL url = new URL(reqUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
