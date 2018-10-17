@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Cryptocurrency Watcher</string>
+    <string name="update_exchange_rate">Update exchange rate</string>
 </resources>

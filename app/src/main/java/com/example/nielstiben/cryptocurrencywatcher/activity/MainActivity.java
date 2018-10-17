@@ -1,35 +1,47 @@
 package com.example.nielstiben.cryptocurrencywatcher.activity;
 
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.SharedPreferences;
-import android.os.AsyncTask;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import com.example.nielstiben.cryptocurrencywatcher.R;
 import com.example.nielstiben.cryptocurrencywatcher.listener.CurrencyListener;
-import com.example.nielstiben.cryptocurrencywatcher.misc.HttpHandler;
+import com.example.nielstiben.cryptocurrencywatcher.listener.RequestCurrenciesListener;
+import com.example.nielstiben.cryptocurrencywatcher.listener.RequestExchangeRateListener;
+import com.example.nielstiben.cryptocurrencywatcher.misc.RequestCurrenciesRunnable;
+import com.example.nielstiben.cryptocurrencywatcher.misc.RequestExchangeRateRunnable;
 import com.example.nielstiben.cryptocurrencywatcher.view.CurrencyView;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 import org.ocpsoft.prettytime.PrettyTime;
 
-import java.io.IOException;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 
 public class MainActivity extends AppCompatActivity {
     String host = "https://api.cryptonator.com/api/";
-    TextView tvUpdatedOn;
 
+    // Exchange rate related
     float exchangeRate; // 1 EUR = ?? BTC
+    long exchangeRateUpdated;
+
+    // Hashmap containing all currencies (e.g. <"EUR"><"Euro">)
+    HashMap<String, String> currencies;
+    ArrayAdapter<String> currenciesAdapter;
+
+    // Views
     CurrencyView firstCurrencyView;
     CurrencyView secondCurrencyView;
-    long updatedOn;
+    TextView tvUpdatedOn;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -41,109 +53,211 @@ public class MainActivity extends AppCompatActivity {
         secondCurrencyView = findViewById(R.id.cv_second);
         tvUpdatedOn = findViewById(R.id.tv_updated_on);
 
-        loadPreferences(); // Load last-used settings
-        new RequestData().execute(); // Update exchange rate
+        // Load last-used settings
+        loadPreferences();
 
-        // Add listeners to both cards
+        // Retrieve data
+        updateExchangeRate();
+        updateCurrencies();
+
+        // Reload UI
+        new UpdateUIThread().run();
+
+        // Add listeners to "Left" card
         firstCurrencyView.setListener(new CurrencyListener() {
             @Override
             public void onCardClick() {
-                new RequestData().execute(); // Retrieve exchange rate
+                // Card itself is clicked => show 'change currency' list
+                showSelectCurrencyDialog(0);
             }
 
             @Override
             public void onInput() {
-                updateResults();
+                // New user input => just recalculate & refresh view
+                new UpdateUIThread().run();
             }
         });
+
+        // Add listener to "Right" card
         secondCurrencyView.setListener(new CurrencyListener() {
             @Override
             public void onCardClick() {
-                new RequestData().execute(); // Retrieve exchange rate
+                // Card itself is clicked => show 'change currency' list
+                showSelectCurrencyDialog(1);
             }
 
             @Override
             public void onInput() {
-                updateResults();
+                // New user input => just recalculate & refresh view
+                new UpdateUIThread().run();
+            }
+        });
+
+        // Assign action to "Update" Button
+        findViewById(R.id.btn_update).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                updateExchangeRate(); // Retrieve exchange rate for this coin
+                new UpdateUIThread().run(); // Reload UI
+
+                // Also try to load the currencies if none are there yet
+                if(currencies.size() == 0) updateCurrencies();
             }
         });
     }
 
+    /**
+     * Method for showing the dialog containing all currencies
+     * @param chozenCurrency first or second currency-box?
+     */
+    private void showSelectCurrencyDialog(final int chozenCurrency) {
+        AlertDialog.Builder builderSingle = new AlertDialog.Builder(MainActivity.this);
+        builderSingle.setTitle("Select currency:");
+
+        builderSingle.setNegativeButton("cancel", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.dismiss();
+            }
+        });
+
+        builderSingle.setAdapter(currenciesAdapter, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                String strCurrency = currenciesAdapter.getItem(which);
+                String currencyCode = Objects.requireNonNull(strCurrency).split(" ")[0];
+                String alias = currencies.get(currencyCode);
+
+                // Apply currency
+                if (chozenCurrency == 0) {
+                    if(!secondCurrencyView.getCurrencyCode().equals(currencyCode)){
+                        firstCurrencyView.setCurrencyCode(currencyCode);
+                        firstCurrencyView.setAlias(alias);
+                    }else{
+                        runOnUiThread(new ToasterThread("Coin is already loaded!"));
+                    }
+
+                } else {
+                    if(!firstCurrencyView.getCurrencyCode().equals(currencyCode)){
+                        secondCurrencyView.setCurrencyCode(currencyCode);
+                        secondCurrencyView.setAlias(alias);
+                    }else{
+                        runOnUiThread(new ToasterThread("Coin is already loaded!"));
+                    }
+                }
+
+                updateExchangeRate(); // Retrieve exchange rate for this coin
+                new UpdateUIThread().run(); // Reload UI
+
+
+            }
+        });
+        builderSingle.show();
+    }
 
     /**
-     * Updates the currency cards based on the user input and exhange rate
+     * Method for updating the exchange rate of the current currency
      */
-    private void updateResults() {
-        // Set update label
-        PrettyTime p = new PrettyTime();
-        if (updatedOn >= 0)
-            tvUpdatedOn.setText("Updated " + p.format(new Date(updatedOn)));
+    private void updateExchangeRate() {
+        String currency1 = firstCurrencyView.getCurrencyCode();
+        String currency2 = secondCurrencyView.getCurrencyCode();
 
-        // Calculate and set result
-        if (firstCurrencyView.hasFocus()) {
-            // Plot result in second CurrencyView
-            float multiplier = firstCurrencyView.getAmount();
-
-            secondCurrencyView.setAmount(multiplier * exchangeRate);
-        } else {
-            // Plot result in first CurrencyView
-            float divider = secondCurrencyView.getAmount();
-            float result = exchangeRate / divider;
-            if (!Float.isInfinite(result)) firstCurrencyView.setAmount(divider / exchangeRate);
-            else firstCurrencyView.setAmount(0);
-        }
-
-        savePreferences();
-    }
-
-    private class RequestData extends AsyncTask<Void, Void, Void> {
-
-        @Override
-        protected Void doInBackground(Void... voids) {
-            // Build request URL
-            String requestURL = host;
-            requestURL += "ticker/";
-            requestURL += firstCurrencyView.getCurrencyCode(); // Append first currency
-            requestURL += "-";
-            requestURL += secondCurrencyView.getCurrencyCode(); // Append second currency
-
-            HttpHandler sh = new HttpHandler();
-            String jsonString = "";
-            try {
-                jsonString = sh.makeServiceCall(requestURL);
-                if (!jsonString.isEmpty()) {
-                    // Parse JSON and get price
-                    JSONObject jsonObj = new JSONObject(jsonString);
-                    updatedOn = jsonObj.getLong("timestamp") * 1000;
-                    exchangeRate = Float.parseFloat(jsonObj.getJSONObject("ticker").getString("price")); // Update rate
-                }
-            } catch (IOException e) {
-                System.err.println(e.toString());
-                runOnUiThread(new Toaster("No internet connection"));
-
-            } catch (JSONException e) {
-                runOnUiThread(new Toaster("JSON parsing issues"));
+        // Start the thread
+        new Thread(new RequestExchangeRateRunnable(host, currency1, currency2, new RequestExchangeRateListener() {
+            @Override
+            public void onExchangeRateReceived(float rate, long timestamp) {
+                // Exchange rate received -> Show it!
+                exchangeRate = rate;
+                exchangeRateUpdated = timestamp;
+                runOnUiThread(new UpdateUIThread());
             }
-            return null;
-        }
 
+            @Override
+            public void onExchangeRateErrorReceived(String errorMessage) {
+                // Error occurred -> Toast it!
+                runOnUiThread(new ToasterThread(errorMessage));
+            }
+        })).start();
+
+    }
+
+    /**
+     * Method for updating the list of all the currencies
+     */
+    private void updateCurrencies() {
+        new Thread(new RequestCurrenciesRunnable(host, new RequestCurrenciesListener() {
+            @Override
+            public void onCurrenciesReceived(HashMap<String, String> c) {
+                currencies = c;
+                String currencyTexts[] = new String[currencies.size()];                 // Create array
+
+                // Fill this array
+                int i = 0;
+                for (Map.Entry<String, String> entry : currencies.entrySet()) {
+                    if (!entry.getKey().equals(entry.getValue()))
+                        currencyTexts[i] = entry.getKey() + " (" + entry.getValue() + ")";
+                    else currencyTexts[i] = entry.getKey();
+                    i++;
+                }
+                Arrays.sort(currencyTexts); // Sort this array
+                currenciesAdapter = new ArrayAdapter<String>(MainActivity.this, android.R.layout.select_dialog_singlechoice); // Initialize adapter list
+                currenciesAdapter.addAll(currencyTexts);                 // Add Array as data source
+            }
+
+            @Override
+            public void onCurrenciesErrorReceived(String errorMessage) {
+                // Error occurred -> Toast it!
+//                runOnUiThread(new ToasterThread(errorMessage));
+            }
+        })).start();
+    }
+
+    /**
+     * Updates the currency cards based on the user input and exchange rate
+     */
+    private class UpdateUIThread extends Thread {
         @Override
-        protected void onPostExecute(Void aVoid) {
-            super.onPostExecute(aVoid);
-            updateResults();
+        public void run() {
+            super.run();
+            // Set update label
+            PrettyTime p = new PrettyTime();
+            if (exchangeRateUpdated >= 0) {
+                String updatedText = "Updated " + p.format(new Date(exchangeRateUpdated));
+                tvUpdatedOn.setText(updatedText);
+            }
+
+            // Calculate and set result
+            if (firstCurrencyView.hasFocus()) {
+                // Focus on left panel
+                float multiplier = firstCurrencyView.getAmount();
+                secondCurrencyView.setAmount(multiplier * exchangeRate);
+            } else {
+                // Focus on right panel
+                float divider = secondCurrencyView.getAmount();
+                float result = exchangeRate / divider;
+                if (!Float.isInfinite(result)) firstCurrencyView.setAmount(divider / exchangeRate);
+                else firstCurrencyView.setAmount(0);
+            }
+
+            savePreferences(); // Save preferences to phone's memory
+
         }
     }
 
-    private class Toaster implements Runnable {
-        String message;
+    /**
+     * Toaster
+     */
+    private class ToasterThread extends Thread {
+        String toastText;
 
-        public Toaster(String message) {
-            this.message = message;
+        private ToasterThread(String toastText) {
+            this.toastText = toastText;
         }
 
         @Override
         public void run() {
-            Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show();
+            super.run();
+            Toast.makeText(getApplicationContext(), toastText, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -162,7 +276,7 @@ public class MainActivity extends AppCompatActivity {
         String secondCurrencyAlias = prefs.getString("second_currency_alias", "Euro");
         float secondCurrencyAmount = prefs.getFloat("second_currency_amount", 5600);
 
-        updatedOn = prefs.getLong("updated_on", -1);
+        exchangeRateUpdated = prefs.getLong("updated_on", -1);
         exchangeRate = prefs.getFloat("exchange_rate", 0);
 
 
@@ -180,7 +294,6 @@ public class MainActivity extends AppCompatActivity {
      * Method for saving the current settings to the phone's Shared Preferences
      */
     private void savePreferences() {
-
         // Get the values from the Views
         String firstCurrencyCode = firstCurrencyView.getCurrencyCode();
         String firstCurrencyAlias = firstCurrencyView.getAlias();
@@ -199,10 +312,8 @@ public class MainActivity extends AppCompatActivity {
         prefsEditor.putString("second_currency_alias", secondCurrencyAlias);
         prefsEditor.putFloat("second_currency_amount", secondCurrencyAmount);
 
-        prefsEditor.putLong("updated_on", updatedOn);
+        prefsEditor.putLong("updated_on", exchangeRateUpdated);
         prefsEditor.putFloat("exchange_rate", exchangeRate);
         prefsEditor.apply();
     }
-
-
 }

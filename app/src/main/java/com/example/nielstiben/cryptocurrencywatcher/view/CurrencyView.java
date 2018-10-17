@@ -18,7 +18,6 @@ import com.example.nielstiben.cryptocurrencywatcher.listener.CurrencyListener;
  * TODO: document your custom view class.
  */
 public class CurrencyView extends LinearLayout {
-    private CardView cvCurrencyCard;
     private TextView tvAlias;
     private EditText etAmount;
 
@@ -55,7 +54,7 @@ public class CurrencyView extends LinearLayout {
         inflate(context, R.layout.currency_view, this);
 
         // Find UI elements
-        cvCurrencyCard = findViewById(R.id.cv_currency_card);
+        CardView cvCurrencyCard = findViewById(R.id.cv_currency_card);
         tvAlias = findViewById(R.id.tv_alias);
         etAmount = findViewById(R.id.et_amount);
 

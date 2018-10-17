@@ -11,15 +11,15 @@ import java.net.URL;
 /**
  * Class for retrieving the JSON web page
  */
-public class HttpHandler {
+class HttpHandler {
 
     private static final String TAG = HttpHandler.class.getSimpleName();
 
-    public HttpHandler() {
+    HttpHandler() {
     }
 
     // todo: better error handling
-    public String makeServiceCall(String reqUrl) throws IOException {
+    String makeServiceCall(String reqUrl) throws IOException {
         URL url = new URL(reqUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
